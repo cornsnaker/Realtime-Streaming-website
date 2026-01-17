@@ -381,15 +381,40 @@ git push heroku main
 ```
 
 ### Docker
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-EXPOSE 4000
-CMD ["npm", "start"]
+
+**Build the image:**
+```bash
+docker build -t streamflow .
 ```
+
+**Run the container:**
+```bash
+docker run -d -p 4000:4000 --name streamflow streamflow
+```
+
+**With custom port:**
+```bash
+docker run -d -p 8080:8080 -e PORT=8080 --name streamflow streamflow
+```
+
+**Docker Compose:**
+```yaml
+version: '3.8'
+services:
+  streamflow:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+```
+
+**Features included in Docker image:**
+- Node.js 18 Alpine (lightweight)
+- ffmpeg for video analysis and subtitle extraction
+- Health check endpoint
+- Production-optimized
 
 ## Contributing
 
