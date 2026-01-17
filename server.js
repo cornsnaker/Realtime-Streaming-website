@@ -8,6 +8,8 @@ const https = require('https');
 const url = require('url');
 const path = require('path');
 const fs = require('fs');
+const { pipeline } = require('stream');
+const assToVtt = require('ass-to-vtt');
 
 const PORT = process.env.PORT || 4000;
 
@@ -40,23 +42,142 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
+    // Play endpoint: /play?url=VIDEO_URL - Opens video in web player
+    if (pathname === '/play') {
+        const videoUrl = parsedUrl.query.url;
+
+        if (!videoUrl) {
+            // Redirect to home if no URL provided
+            res.writeHead(302, { 'Location': '/' });
+            res.end();
+            return;
+        }
+
+        // Serve index.html with the video URL pre-loaded
+        const indexPath = path.join(__dirname, 'index.html');
+        fs.readFile(indexPath, 'utf8', (err, data) => {
+            if (err) {
+                res.writeHead(500);
+                res.end('Server error');
+                return;
+            }
+
+            // Inject script to auto-load the video
+            const autoLoadScript = `
+                <script>
+                    window.addEventListener('DOMContentLoaded', () => {
+                        const urlInput = document.getElementById('urlInput');
+                        if (urlInput) {
+                            urlInput.value = decodeURIComponent('${encodeURIComponent(videoUrl)}');
+                            // Auto-trigger load after a short delay
+                            setTimeout(() => {
+                                const loadBtn = document.getElementById('loadBtn');
+                                if (loadBtn) loadBtn.click();
+                            }, 100);
+                        }
+                    });
+                </script>
+            `;
+
+            // Insert before closing body tag
+            const modifiedHtml = data.replace('</body>', `${autoLoadScript}</body>`);
+
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(modifiedHtml);
+        });
+        return;
+    }
+
     // Proxy endpoint: /proxy?url=VIDEO_URL
     if (pathname === '/proxy') {
         const videoUrl = parsedUrl.query.url;
-        
+
         if (!videoUrl) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Missing url parameter' }));
             return;
         }
-        
+
         console.log(`\n🎬 Proxying: ${videoUrl}`);
-        
+
         try {
             await proxyVideo(videoUrl, req, res);
         } catch (error) {
             console.error('❌ Proxy error:', error.message);
             // Only send error if headers haven't been sent
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+        }
+        return;
+    }
+
+    // Download endpoint: /download?url=VIDEO_URL&filename=NAME
+    if (pathname === '/download') {
+        const videoUrl = parsedUrl.query.url;
+        const filename = parsedUrl.query.filename || 'video';
+
+        if (!videoUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing url parameter' }));
+            return;
+        }
+
+        console.log(`\n📥 Download: ${videoUrl}`);
+
+        try {
+            await proxyDownload(videoUrl, filename, req, res);
+        } catch (error) {
+            console.error('❌ Download error:', error.message);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+        }
+        return;
+    }
+
+    // Subtitle conversion endpoint: /subtitle/convert?url=SUBTITLE_URL
+    if (pathname === '/subtitle/convert') {
+        const subtitleUrl = parsedUrl.query.url;
+
+        if (!subtitleUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing url parameter' }));
+            return;
+        }
+
+        console.log(`\n📝 Converting subtitle: ${subtitleUrl}`);
+
+        try {
+            await convertAndProxySubtitle(subtitleUrl, req, res);
+        } catch (error) {
+            console.error('❌ Subtitle conversion error:', error.message);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+        }
+        return;
+    }
+
+    // Subtitle proxy endpoint: /subtitle/proxy?url=SUBTITLE_URL
+    if (pathname === '/subtitle/proxy') {
+        const subtitleUrl = parsedUrl.query.url;
+
+        if (!subtitleUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing url parameter' }));
+            return;
+        }
+
+        console.log(`\n📝 Proxying subtitle: ${subtitleUrl}`);
+
+        try {
+            await proxySubtitle(subtitleUrl, req, res);
+        } catch (error) {
+            console.error('❌ Subtitle proxy error:', error.message);
             if (!res.headersSent) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: error.message }));
@@ -142,17 +263,37 @@ function proxyVideo(videoUrl, clientReq, clientRes) {
                 return;
             }
             
+            // Extract filename from Content-Disposition or URL
+            let filename = 'unknown';
+            const contentDisposition = proxyRes.headers['content-disposition'];
+            if (contentDisposition) {
+                const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1].replace(/['"]/g, '');
+                }
+            }
+            // Fallback to URL parsing
+            if (filename === 'unknown') {
+                const urlPath = parsedUrl.pathname;
+                const pathSegments = urlPath.split('/');
+                filename = pathSegments[pathSegments.length - 1] || 'video';
+                filename = decodeURIComponent(filename);
+                // Remove query params from filename
+                filename = filename.split('?')[0];
+            }
+
             // Forward response headers
             const responseHeaders = {
                 'Content-Type': proxyRes.headers['content-type'] || 'video/mp4',
                 'Accept-Ranges': 'bytes',
-                'Cache-Control': 'no-cache'
+                'Cache-Control': 'no-cache',
+                'X-Original-Filename': filename
             };
-            
+
             if (proxyRes.headers['content-length']) {
                 responseHeaders['Content-Length'] = proxyRes.headers['content-length'];
             }
-            
+
             if (proxyRes.headers['content-range']) {
                 responseHeaders['Content-Range'] = proxyRes.headers['content-range'];
             }
@@ -202,6 +343,186 @@ function proxyVideo(videoUrl, clientReq, clientRes) {
             proxyReq.destroy();
         });
         
+        proxyReq.end();
+    });
+}
+
+function proxyDownload(videoUrl, filename, clientReq, clientRes) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = url.parse(videoUrl);
+        const protocol = parsedUrl.protocol === 'https:' ? https : http;
+
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity',
+            'Connection': 'keep-alive'
+        };
+
+        const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+            path: parsedUrl.path,
+            method: 'GET',
+            headers: headers,
+            timeout: 30000
+        };
+
+        const proxyReq = protocol.request(options, (proxyRes) => {
+            // Handle redirects
+            if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+                let redirectUrl = proxyRes.headers.location;
+                if (redirectUrl.startsWith('/')) {
+                    redirectUrl = `${parsedUrl.protocol}//${parsedUrl.hostname}${redirectUrl}`;
+                }
+                console.log(`🔄 Redirect: ${redirectUrl}`);
+                proxyDownload(redirectUrl, filename, clientReq, clientRes)
+                    .then(resolve)
+                    .catch(reject);
+                return;
+            }
+
+            // Force download with Content-Disposition
+            const responseHeaders = {
+                'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
+                'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+                'Access-Control-Allow-Origin': '*'
+            };
+
+            if (proxyRes.headers['content-length']) {
+                responseHeaders['Content-Length'] = proxyRes.headers['content-length'];
+            }
+
+            clientRes.writeHead(200, responseHeaders);
+            proxyRes.pipe(clientRes);
+
+            proxyRes.on('end', () => {
+                console.log('✅ Download complete');
+                resolve();
+            });
+
+            proxyRes.on('error', reject);
+        });
+
+        proxyReq.on('timeout', () => {
+            console.error('⏱️ Request timeout');
+            proxyReq.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        proxyReq.on('error', reject);
+        proxyReq.end();
+    });
+}
+
+function convertAndProxySubtitle(subtitleUrl, clientReq, clientRes) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = url.parse(subtitleUrl);
+        const protocol = parsedUrl.protocol === 'https:' ? https : http;
+
+        const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+            path: parsedUrl.path,
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': '*/*'
+            },
+            timeout: 30000
+        };
+
+        const proxyReq = protocol.request(options, (proxyRes) => {
+            if (proxyRes.statusCode !== 200) {
+                reject(new Error(`HTTP ${proxyRes.statusCode}`));
+                return;
+            }
+
+            // Set response headers
+            clientRes.writeHead(200, {
+                'Content-Type': 'text/vtt; charset=utf-8',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            });
+
+            // Convert ASS to VTT and stream to client
+            pipeline(
+                proxyRes,
+                assToVtt(),
+                clientRes,
+                (err) => {
+                    if (err) {
+                        console.error('Pipeline error:', err);
+                        reject(err);
+                    } else {
+                        console.log('✅ Subtitle converted and sent');
+                        resolve();
+                    }
+                }
+            );
+        });
+
+        proxyReq.on('error', reject);
+        proxyReq.on('timeout', () => {
+            proxyReq.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        proxyReq.end();
+    });
+}
+
+function proxySubtitle(subtitleUrl, clientReq, clientRes) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = url.parse(subtitleUrl);
+        const protocol = parsedUrl.protocol === 'https:' ? https : http;
+
+        const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+            path: parsedUrl.path,
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': '*/*'
+            },
+            timeout: 30000
+        };
+
+        const proxyReq = protocol.request(options, (proxyRes) => {
+            if (proxyRes.statusCode !== 200) {
+                reject(new Error(`HTTP ${proxyRes.statusCode}`));
+                return;
+            }
+
+            // Determine content type
+            let contentType = proxyRes.headers['content-type'] || 'text/vtt; charset=utf-8';
+            if (!contentType.includes('vtt') && !contentType.includes('srt')) {
+                contentType = 'text/vtt; charset=utf-8';
+            }
+
+            clientRes.writeHead(200, {
+                'Content-Type': contentType,
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            });
+
+            proxyRes.pipe(clientRes);
+
+            proxyRes.on('end', () => {
+                console.log('✅ Subtitle proxied');
+                resolve();
+            });
+
+            proxyRes.on('error', reject);
+        });
+
+        proxyReq.on('error', reject);
+        proxyReq.on('timeout', () => {
+            proxyReq.destroy();
+            reject(new Error('Request timeout'));
+        });
+
         proxyReq.end();
     });
 }

@@ -60,7 +60,26 @@ class StreamFlowPlayer {
         // Shortcuts Modal
         this.shortcutsModal = document.getElementById('shortcutsModal');
         this.closeShortcuts = document.getElementById('closeShortcuts');
-        
+
+        // New UI Elements
+        this.videoInfoSection = document.getElementById('videoInfoSection');
+        this.filenameText = document.getElementById('filenameText');
+        this.subtitleBtn = document.getElementById('subtitleBtn');
+        this.subtitleMenu = document.getElementById('subtitleMenu');
+        this.subtitleTracks = document.getElementById('subtitleTracks');
+        this.loadSubtitleBtn = document.getElementById('loadSubtitleBtn');
+        this.subtitleUrlInput = document.getElementById('subtitleUrl');
+        this.subtitleFileInput = document.getElementById('subtitleFile');
+        this.audioBtn = document.getElementById('audioBtn');
+        this.audioMenu = document.getElementById('audioMenu');
+        this.audioTracks = document.getElementById('audioTracks');
+        this.linkBtn = document.getElementById('linkBtn');
+        this.linkMenu = document.getElementById('linkMenu');
+        this.copyStreamingLink = document.getElementById('copyStreamingLink');
+        this.copyPlayLink = document.getElementById('copyPlayLink');
+        this.copyDownloadLink = document.getElementById('copyDownloadLink');
+        this.downloadBtn = document.getElementById('downloadBtn');
+
         // State
         this.isPlaying = false;
         this.isMuted = false;
@@ -69,8 +88,15 @@ class StreamFlowPlayer {
         this.cursorTimeout = null;
         this.lastVolume = 1;
         this.currentUrl = '';
+        this.originalUrl = '';
+        this.originalFilename = '';
         this.loadStartTime = 0;
         this.bytesLoaded = 0;
+
+        // Subtitle & Audio State
+        this.loadedSubtitles = [];
+        this.currentSubtitle = -1;
+        this.currentAudioTrack = 0;
         
         // Buffer Management
         this.bufferCheckInterval = null;
@@ -207,9 +233,76 @@ class StreamFlowPlayer {
             });
         }
         
-        // Close speed menu when clicking outside
+        // Subtitle controls
+        if (this.subtitleBtn) {
+            this.subtitleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.subtitleMenu.classList.toggle('active');
+            });
+        }
+
+        if (this.loadSubtitleBtn) {
+            this.loadSubtitleBtn.addEventListener('click', () => this.loadSubtitleFromUrl());
+        }
+
+        if (this.subtitleUrlInput) {
+            this.subtitleUrlInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.loadSubtitleFromUrl();
+            });
+            this.subtitleUrlInput.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        if (this.subtitleFileInput) {
+            this.subtitleFileInput.addEventListener('change', (e) => this.loadSubtitleFromFile(e));
+        }
+
+        // Audio track controls
+        if (this.audioBtn) {
+            this.audioBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.updateAudioTrackList();
+                this.audioMenu.classList.toggle('active');
+            });
+        }
+
+        // Link & Download controls
+        if (this.linkBtn) {
+            this.linkBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.linkMenu.classList.toggle('active');
+            });
+        }
+
+        if (this.copyStreamingLink) {
+            this.copyStreamingLink.addEventListener('click', () => {
+                this.copyToClipboard(this.currentUrl, 'Streaming link copied!');
+            });
+        }
+
+        if (this.copyPlayLink) {
+            this.copyPlayLink.addEventListener('click', () => {
+                const playUrl = `${window.location.origin}/play?url=${encodeURIComponent(this.originalUrl)}`;
+                this.copyToClipboard(playUrl, 'Web player link copied!');
+            });
+        }
+
+        if (this.copyDownloadLink) {
+            this.copyDownloadLink.addEventListener('click', () => {
+                const downloadUrl = this.getDownloadUrl();
+                this.copyToClipboard(downloadUrl, 'Download link copied!');
+            });
+        }
+
+        if (this.downloadBtn) {
+            this.downloadBtn.addEventListener('click', () => this.downloadVideo());
+        }
+
+        // Close menus when clicking outside
         document.addEventListener('click', () => {
             this.speedMenu.classList.remove('active');
+            if (this.subtitleMenu) this.subtitleMenu.classList.remove('active');
+            if (this.audioMenu) this.audioMenu.classList.remove('active');
+            if (this.linkMenu) this.linkMenu.classList.remove('active');
         });
         
         // Shortcuts Modal
@@ -250,14 +343,18 @@ class StreamFlowPlayer {
                 clearTimeout(this.loadTimeout);
                 this.loadTimeout = null;
             }
-            
+
             this.durationEl.textContent = this.formatTime(this.video.duration);
             this.hideLoading();
             // Start buffer management once we have metadata
             this.startBufferManagement();
             // Initialize speed status
             this.updateSpeedStatus();
-            
+
+            // New feature initializations
+            this.extractFilename();
+            this.detectAudioTracks();
+
             console.log(`Video loaded: ${this.formatTime(this.video.duration)} duration`);
         });
         
@@ -1228,15 +1325,350 @@ class StreamFlowPlayer {
     
     formatTime(seconds) {
         if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
-        
+
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
-        
+
         if (h > 0) {
             return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         }
         return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // ========== NEW FEATURES ==========
+
+    // Filename extraction and display
+    async extractFilename() {
+        try {
+            const response = await fetch(this.currentUrl, { method: 'HEAD' });
+            const filename = response.headers.get('X-Original-Filename') ||
+                            this.parseFilenameFromUrl(this.originalUrl);
+            this.originalFilename = filename;
+            this.updateFilenameDisplay();
+        } catch (error) {
+            this.originalFilename = this.parseFilenameFromUrl(this.originalUrl);
+            this.updateFilenameDisplay();
+        }
+    }
+
+    parseFilenameFromUrl(url) {
+        try {
+            const urlObj = new URL(url);
+            const pathSegments = urlObj.pathname.split('/');
+            let filename = pathSegments[pathSegments.length - 1] || 'video';
+            filename = decodeURIComponent(filename);
+            // Remove query params from filename
+            filename = filename.split('?')[0];
+            return filename || 'Untitled Video';
+        } catch {
+            return 'Untitled Video';
+        }
+    }
+
+    updateFilenameDisplay() {
+        if (this.filenameText && this.originalFilename) {
+            this.filenameText.textContent = this.originalFilename;
+            if (this.videoInfoSection) {
+                this.videoInfoSection.style.display = 'flex';
+            }
+        }
+    }
+
+    // Download functionality
+    getDownloadUrl() {
+        const filename = this.originalFilename || 'video.mp4';
+        return `${window.location.origin}/download?url=${encodeURIComponent(this.originalUrl)}&filename=${encodeURIComponent(filename)}`;
+    }
+
+    downloadVideo() {
+        const link = document.createElement('a');
+        link.href = this.getDownloadUrl();
+        link.download = this.originalFilename || 'video.mp4';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        this.showNotification('Download started!');
+    }
+
+    copyToClipboard(text, message) {
+        navigator.clipboard.writeText(text).then(() => {
+            this.showNotification(message);
+        }).catch(() => {
+            this.showNotification('Failed to copy to clipboard');
+        });
+    }
+
+    showNotification(message) {
+        const notification = document.createElement('div');
+        notification.className = 'notification';
+        notification.textContent = message;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.classList.add('show');
+        }, 10);
+
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 300);
+        }, 2000);
+    }
+
+    // Audio track management
+    updateAudioTrackList() {
+        if (!this.video.audioTracks || this.video.audioTracks.length === 0) {
+            this.audioTracks.innerHTML = '<div class="no-tracks">No audio tracks detected</div>';
+            return;
+        }
+
+        const tracksHTML = [];
+        for (let i = 0; i < this.video.audioTracks.length; i++) {
+            const track = this.video.audioTracks[i];
+            const isActive = track.enabled;
+            const trackLabel = track.label || track.language || `Track ${i + 1}`;
+
+            tracksHTML.push(`
+                <button class="audio-track-option ${isActive ? 'active' : ''}" data-track="${i}">
+                    <span>${trackLabel}</span>
+                    ${isActive ? '<svg viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' : ''}
+                </button>
+            `);
+        }
+
+        this.audioTracks.innerHTML = tracksHTML.join('');
+
+        // Add click handlers
+        this.audioTracks.querySelectorAll('.audio-track-option').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const trackIndex = parseInt(e.currentTarget.dataset.track);
+                this.selectAudioTrack(trackIndex);
+            });
+        });
+    }
+
+    selectAudioTrack(trackIndex) {
+        if (!this.video.audioTracks || trackIndex >= this.video.audioTracks.length) {
+            return;
+        }
+
+        // Disable all tracks
+        for (let i = 0; i < this.video.audioTracks.length; i++) {
+            this.video.audioTracks[i].enabled = false;
+        }
+
+        // Enable selected track
+        this.video.audioTracks[trackIndex].enabled = true;
+        this.currentAudioTrack = trackIndex;
+
+        // Update UI
+        this.updateAudioTrackList();
+        const trackLabel = this.video.audioTracks[trackIndex].label || 'Track ' + (trackIndex + 1);
+        this.showNotification(`Audio track: ${trackLabel}`);
+    }
+
+    detectAudioTracks() {
+        // Check if browser supports audioTracks API
+        if (this.video.audioTracks && this.video.audioTracks.length > 0) {
+            console.log(`📻 Detected ${this.video.audioTracks.length} audio tracks`);
+            if (this.audioBtn) this.audioBtn.classList.add('available');
+        } else {
+            console.log('ℹ️ No multiple audio tracks detected or API not supported');
+        }
+    }
+
+    // Subtitle management
+    async loadSubtitleFromUrl() {
+        const url = this.subtitleUrlInput.value.trim();
+        if (!url) return;
+
+        try {
+            let subtitleUrl = url;
+
+            // Check if ASS file (needs conversion)
+            if (url.toLowerCase().endsWith('.ass')) {
+                subtitleUrl = `${window.location.origin}/subtitle/convert?url=${encodeURIComponent(url)}`;
+            } else {
+                // VTT or SRT - proxy to handle CORS
+                subtitleUrl = `${window.location.origin}/subtitle/proxy?url=${encodeURIComponent(url)}`;
+            }
+
+            this.addSubtitleTrack(subtitleUrl, `Subtitle ${this.loadedSubtitles.length + 1}`);
+            this.showNotification('Subtitle loaded!');
+            this.subtitleUrlInput.value = '';
+        } catch (error) {
+            console.error('Subtitle load error:', error);
+            this.showNotification('Failed to load subtitle');
+        }
+    }
+
+    async loadSubtitleFromFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            let vttContent = text;
+
+            // Convert ASS to VTT if needed
+            if (file.name.toLowerCase().endsWith('.ass')) {
+                vttContent = await this.convertAssToVtt(text);
+            }
+
+            // Create blob URL
+            const blob = new Blob([vttContent], { type: 'text/vtt' });
+            const url = URL.createObjectURL(blob);
+
+            this.addSubtitleTrack(url, file.name);
+            this.showNotification(`Loaded: ${file.name}`);
+
+            // Reset input
+            event.target.value = '';
+        } catch (error) {
+            console.error('File load error:', error);
+            this.showNotification('Failed to load subtitle file');
+        }
+    }
+
+    addSubtitleTrack(url, label) {
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = label;
+        track.srclang = 'en';
+        track.src = url;
+
+        this.video.appendChild(track);
+
+        const trackInfo = {
+            track: track,
+            label: label,
+            index: this.loadedSubtitles.length
+        };
+
+        this.loadedSubtitles.push(trackInfo);
+        this.updateSubtitleTrackList();
+
+        // Auto-enable first subtitle
+        if (this.loadedSubtitles.length === 1) {
+            this.selectSubtitle(0);
+        }
+    }
+
+    updateSubtitleTrackList() {
+        const tracksHTML = ['<div class="subtitle-track-option active" data-track="-1" style="cursor: pointer;"><span>Off</span></div>'];
+
+        this.loadedSubtitles.forEach((sub, index) => {
+            const isActive = index === this.currentSubtitle;
+            tracksHTML.push(`
+                <div class="subtitle-track-option ${isActive ? 'active' : ''}" data-track="${index}" style="cursor: pointer;">
+                    <span>${sub.label}</span>
+                    <button class="subtitle-remove-btn" data-index="${index}">×</button>
+                </div>
+            `);
+        });
+
+        this.subtitleTracks.innerHTML = tracksHTML.join('');
+
+        // Add click handlers
+        this.subtitleTracks.querySelectorAll('.subtitle-track-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                if (e.target.classList.contains('subtitle-remove-btn')) return;
+                const trackIndex = parseInt(e.currentTarget.dataset.track);
+                this.selectSubtitle(trackIndex);
+            });
+        });
+
+        this.subtitleTracks.querySelectorAll('.subtitle-remove-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const index = parseInt(e.currentTarget.dataset.index);
+                this.removeSubtitle(index);
+            });
+        });
+    }
+
+    selectSubtitle(index) {
+        // Disable all tracks
+        this.loadedSubtitles.forEach(sub => {
+            sub.track.mode = 'disabled';
+        });
+
+        if (index >= 0 && index < this.loadedSubtitles.length) {
+            this.loadedSubtitles[index].track.mode = 'showing';
+            this.currentSubtitle = index;
+            if (this.subtitleBtn) this.subtitleBtn.classList.add('active');
+        } else {
+            this.currentSubtitle = -1;
+            if (this.subtitleBtn) this.subtitleBtn.classList.remove('active');
+        }
+
+        this.updateSubtitleTrackList();
+    }
+
+    removeSubtitle(index) {
+        if (index < 0 || index >= this.loadedSubtitles.length) return;
+
+        const sub = this.loadedSubtitles[index];
+        this.video.removeChild(sub.track);
+
+        // Revoke blob URL if it exists
+        if (sub.track.src.startsWith('blob:')) {
+            URL.revokeObjectURL(sub.track.src);
+        }
+
+        this.loadedSubtitles.splice(index, 1);
+
+        // Update current subtitle index
+        if (this.currentSubtitle === index) {
+            this.currentSubtitle = -1;
+        } else if (this.currentSubtitle > index) {
+            this.currentSubtitle--;
+        }
+
+        this.updateSubtitleTrackList();
+    }
+
+    // Simple ASS to VTT conversion (client-side fallback)
+    async convertAssToVtt(assContent) {
+        // This is a simplified conversion - the server-side one is more robust
+        let vtt = 'WEBVTT\n\n';
+
+        const lines = assContent.split('\n');
+        let inEvents = false;
+
+        for (const line of lines) {
+            if (line.trim() === '[Events]') {
+                inEvents = true;
+                continue;
+            }
+
+            if (inEvents && line.startsWith('Dialogue:')) {
+                const parts = line.split(',');
+                if (parts.length >= 10) {
+                    const start = this.convertAssTime(parts[1].trim());
+                    const end = this.convertAssTime(parts[2].trim());
+                    const text = parts.slice(9).join(',').replace(/\\N/g, '\n').replace(/\{[^}]+\}/g, '');
+
+                    vtt += `${start} --> ${end}\n${text}\n\n`;
+                }
+            }
+        }
+
+        return vtt;
+    }
+
+    convertAssTime(assTime) {
+        // Convert ASS time (0:00:00.00) to VTT time (00:00:00.000)
+        const parts = assTime.split(':');
+        if (parts.length === 3) {
+            const hours = parts[0].padStart(2, '0');
+            const minutes = parts[1].padStart(2, '0');
+            const secondsParts = parts[2].split('.');
+            const seconds = secondsParts[0].padStart(2, '0');
+            const ms = (secondsParts[1] || '0').padStart(3, '0');
+            return `${hours}:${minutes}:${seconds}.${ms}`;
+        }
+        return assTime;
     }
 }
 

@@ -83,6 +83,23 @@
                         <span class="format-tag">OGG</span>
                         <span class="format-tag">HLS</span>
                         <span class="format-tag">DASH</span>
+                        <span class="format-tag">MP3</span>
+                        <span class="format-tag">M4A</span>
+                        <span class="format-tag">FLAC</span>
+                        <span class="format-tag">WAV</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Video Info Section (shown when video is loaded) -->
+            <section class="video-info-section" id="videoInfoSection" style="display: none;">
+                <div class="video-info">
+                    <div class="video-filename" id="videoFilename">
+                        <svg class="filename-icon" viewBox="0 0 24 24" fill="none">
+                            <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" stroke="currentColor" stroke-width="2"/>
+                            <path d="M13 2v7h7" stroke="currentColor" stroke-width="2"/>
+                        </svg>
+                        <span id="filenameText">Loading...</span>
                     </div>
                 </div>
             </section>
@@ -207,6 +224,95 @@
                             </div>
 
                             <div class="controls-right">
+                                <!-- Subtitle Controls -->
+                                <div class="subtitle-container">
+                                    <button class="ctrl-btn" id="subtitleBtn" title="Subtitles">
+                                        <svg viewBox="0 0 24 24" fill="none">
+                                            <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+                                            <path d="M6 15h2M10 15h8M6 11h8M16 11h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        </svg>
+                                    </button>
+                                    <div class="subtitle-menu" id="subtitleMenu">
+                                        <div class="subtitle-menu-header">Subtitles</div>
+                                        <div class="subtitle-input-section">
+                                            <input
+                                                type="url"
+                                                id="subtitleUrl"
+                                                class="subtitle-input"
+                                                placeholder="Subtitle URL (.vtt, .srt, .ass)"
+                                            >
+                                            <button class="subtitle-load-btn" id="loadSubtitleBtn">Load</button>
+                                        </div>
+                                        <div class="subtitle-tracks" id="subtitleTracks">
+                                            <div class="subtitle-track-option active" data-track="-1">
+                                                <span>Off</span>
+                                            </div>
+                                        </div>
+                                        <div class="subtitle-upload-section">
+                                            <label for="subtitleFile" class="subtitle-upload-label">
+                                                <svg viewBox="0 0 24 24" fill="none">
+                                                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                                </svg>
+                                                Upload Local File
+                                            </label>
+                                            <input type="file" id="subtitleFile" accept=".vtt,.srt,.ass" style="display: none;">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Audio Track Controls -->
+                                <div class="audio-container">
+                                    <button class="ctrl-btn" id="audioBtn" title="Audio Tracks">
+                                        <svg viewBox="0 0 24 24" fill="none">
+                                            <path d="M9 18V5l12-2v13M9 18c0 1.66-1.34 3-3 3s-3-1.34-3-3 1.34-3 3-3 3 1.34 3 3zM21 16c0 1.66-1.34 3-3 3s-3-1.34-3-3 1.34-3 3-3 3 1.34 3 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        </svg>
+                                    </button>
+                                    <div class="audio-menu" id="audioMenu">
+                                        <div class="audio-menu-header">Audio Tracks</div>
+                                        <div class="audio-tracks" id="audioTracks">
+                                            <div class="no-tracks">No audio tracks available</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Link & Download Controls -->
+                                <div class="link-menu-container">
+                                    <button class="ctrl-btn" id="linkBtn" title="Get Links">
+                                        <svg viewBox="0 0 24 24" fill="none">
+                                            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                        </svg>
+                                    </button>
+                                    <div class="link-menu" id="linkMenu">
+                                        <div class="link-menu-header">Video Links</div>
+                                        <button class="link-option" id="copyStreamingLink">
+                                            <svg viewBox="0 0 24 24" fill="none">
+                                                <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                            </svg>
+                                            <span>Copy Streaming Link</span>
+                                        </button>
+                                        <button class="link-option" id="copyPlayLink">
+                                            <svg viewBox="0 0 24 24" fill="none">
+                                                <path d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86a1 1 0 00-1.5.86z" stroke="currentColor" stroke-width="2"/>
+                                                <rect x="2" y="3" width="20" height="18" rx="2" stroke="currentColor" stroke-width="2"/>
+                                            </svg>
+                                            <span>Copy Web Player Link</span>
+                                        </button>
+                                        <button class="link-option" id="copyDownloadLink">
+                                            <svg viewBox="0 0 24 24" fill="none">
+                                                <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                            </svg>
+                                            <span>Copy Download Link</span>
+                                        </button>
+                                        <button class="link-option primary" id="downloadBtn">
+                                            <svg viewBox="0 0 24 24" fill="none">
+                                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                            </svg>
+                                            <span>Download Video</span>
+                                        </button>
+                                    </div>
+                                </div>
+
                                 <!-- Playback Speed -->
                                 <div class="speed-container">
                                     <button class="ctrl-btn speed-btn" id="speedBtn" title="Playback Speed">
