@@ -1,0 +1,15 @@
+{
+  "name": "streamflow-proxy",
+  "version": "1.0.0",
+  "description": "Video streaming proxy server that bypasses CORS restrictions",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["proxy", "streaming", "cors", "video"],
+  "author": "",
+  "license": "ISC"
+}

@@ -9,7 +9,7 @@ const url = require('url');
 const path = require('path');
 const fs = require('fs');
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
 // MIME types for serving static files
 const MIME_TYPES = {
