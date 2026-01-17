@@ -19,7 +19,8 @@ A professional, feature-rich video streaming platform with smart buffering, subt
   - Time jump with custom time input (supports multiple formats)
 
 - **Multi-Format Support**
-  - **Video**: MP4, WebM, OGG
+  - **Video**: MP4, WebM, OGG, MKV (Matroska)
+  - **Codecs**: H.264, H.265/HEVC, VP8, VP9, AV1
   - **Streaming**: HLS (.m3u8), DASH (.mpd)
   - **Audio**: MP3, M4A, FLAC, WAV
 
@@ -54,7 +55,15 @@ A professional, feature-rich video streaming platform with smart buffering, subt
 - Visual indication of available tracks
 - Browser audioTracks API integration
 
-#### 5. `/play` Endpoint
+#### 5. Automatic Stream Detection
+- **ffprobe Integration**: Automatically detects all audio and subtitle streams
+- **Embedded Subtitles**: Extract subtitles from MKV/MP4/WebM containers
+- **Multi-Audio Detection**: Shows count badge when multiple audio tracks detected
+- **Codec Support**: Detects AV1, H.265/HEVC, VP9, H.264
+- **Container Support**: MKV (Matroska), MP4, WebM
+- **Graceful Fallback**: Works without ffmpeg (manual loading still available)
+
+#### 6. `/play` Endpoint
 Share videos with a simple link:
 ```
 http://your-domain.com/play?url=VIDEO_URL
@@ -103,6 +112,23 @@ http://your-domain.com/play?url=VIDEO_URL
    http://localhost:4000
    ```
 
+### Optional: FFmpeg for Advanced Features
+
+For automatic audio/subtitle detection and embedded subtitle extraction:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install ffmpeg
+```
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Note**: The player works without ffmpeg, but embedded subtitle detection will be unavailable.
+
 ## API Endpoints
 
 ### `/play?url=VIDEO_URL`
@@ -144,6 +170,44 @@ Proxies VTT/SRT subtitles with CORS bypass
 - **Parameters**:
   - `url` (required): Subtitle URL (.vtt or .srt)
 - **Response**: Subtitle file with CORS headers
+
+### `/analyze?url=VIDEO_URL`
+Analyzes video file structure using ffprobe
+- **Method**: GET
+- **Parameters**:
+  - `url` (required): Video URL to analyze
+- **Response**: JSON with audio tracks, subtitle tracks, video codec info
+- **Requires**: ffmpeg/ffprobe installed on server
+- **Graceful Degradation**: Returns error if ffprobe unavailable
+
+**Example Response:**
+```json
+{
+  "ffprobeAvailable": true,
+  "format": "matroska,webm",
+  "duration": 5420.5,
+  "audioTracks": [
+    {"index": 0, "codec": "aac", "language": "eng", "channels": 2}
+  ],
+  "subtitleTracks": [
+    {"index": 0, "codec": "ass", "language": "eng", "title": "English"}
+  ],
+  "videoStreams": [
+    {"codec": "av1", "width": 1920, "height": 1080, "fps": 23.976}
+  ],
+  "hasMultipleAudio": false,
+  "hasEmbeddedSubtitles": true
+}
+```
+
+### `/extract-subtitle?url=VIDEO_URL&index=N`
+Extracts embedded subtitle stream from video file
+- **Method**: GET
+- **Parameters**:
+  - `url` (required): Video URL
+  - `index` (optional): Subtitle stream index (default: 0)
+- **Response**: VTT subtitle file
+- **Requires**: ffmpeg installed on server
 
 ## Configuration
 

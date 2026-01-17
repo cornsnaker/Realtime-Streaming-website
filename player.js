@@ -97,7 +97,8 @@ class StreamFlowPlayer {
         this.loadedSubtitles = [];
         this.currentSubtitle = -1;
         this.currentAudioTrack = 0;
-        
+        this.videoAnalysis = null;
+
         // Buffer Management
         this.bufferCheckInterval = null;
         this.targetBufferAhead = 60; // seconds to buffer ahead
@@ -354,6 +355,7 @@ class StreamFlowPlayer {
             // New feature initializations
             this.extractFilename();
             this.detectAudioTracks();
+            this.analyzeVideoStreams();
 
             console.log(`Video loaded: ${this.formatTime(this.video.duration)} duration`);
         });
@@ -1669,6 +1671,92 @@ class StreamFlowPlayer {
             return `${hours}:${minutes}:${seconds}.${ms}`;
         }
         return assTime;
+    }
+
+    // Video stream analysis (automatic audio/subtitle detection)
+    async analyzeVideoStreams() {
+        // Only analyze when using proxy (to avoid CORS)
+        if (!this.useProxyCheckbox.checked || !this.originalUrl) return;
+
+        const analysisUrl = `${window.location.origin}/analyze?url=${encodeURIComponent(this.originalUrl)}`;
+
+        try {
+            const response = await fetch(analysisUrl);
+            const analysis = await response.json();
+
+            if (analysis.ffprobeAvailable) {
+                this.videoAnalysis = analysis;
+
+                // Populate embedded subtitles if found
+                if (analysis.hasEmbeddedSubtitles) {
+                    this.populateEmbeddedSubtitles(analysis.subtitleTracks);
+                }
+
+                // Show audio track count badge if multiple tracks
+                if (analysis.hasMultipleAudio) {
+                    this.showAudioTrackInfo(analysis.audioTracks);
+                }
+
+                console.log('📊 Video analysis:', analysis);
+            }
+        } catch (error) {
+            console.log('ℹ️ Video analysis unavailable');
+        }
+    }
+
+    populateEmbeddedSubtitles(subtitleTracks) {
+        const subtitleTracksDiv = this.subtitleTracks;
+        if (!subtitleTracksDiv) return;
+
+        // Create section header
+        const embeddedHeader = document.createElement('div');
+        embeddedHeader.className = 'subtitle-section-title';
+        embeddedHeader.textContent = 'Embedded Subtitles';
+
+        // Insert at top
+        const firstChild = subtitleTracksDiv.firstChild;
+        subtitleTracksDiv.insertBefore(embeddedHeader, firstChild);
+
+        // Add each embedded subtitle option
+        subtitleTracks.forEach((track, index) => {
+            const trackOption = document.createElement('div');
+            trackOption.className = 'subtitle-track-option embedded';
+            trackOption.dataset.embedded = 'true';
+            trackOption.dataset.index = index;
+            trackOption.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" class="track-icon">
+                    <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
+                    <path d="M7 13h2M11 13h6M7 9h6M15 9h2" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                <span>${track.title} (${track.language})</span>
+            `;
+
+            trackOption.addEventListener('click', () => {
+                this.loadEmbeddedSubtitle(index, track);
+            });
+
+            subtitleTracksDiv.insertBefore(trackOption, firstChild.nextSibling);
+        });
+    }
+
+    async loadEmbeddedSubtitle(index, track) {
+        const extractUrl = `${window.location.origin}/extract-subtitle?url=${encodeURIComponent(this.originalUrl)}&index=${index}`;
+
+        try {
+            this.addSubtitleTrack(extractUrl, track.title);
+            this.showNotification(`Loaded: ${track.title}`);
+        } catch (error) {
+            this.showNotification('Failed to load embedded subtitle', 'error');
+        }
+    }
+
+    showAudioTrackInfo(audioTracks) {
+        if (this.audioBtn && !this.audioBtn.querySelector('.track-count-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'track-count-badge';
+            badge.textContent = audioTracks.length;
+            this.audioBtn.appendChild(badge);
+        }
     }
 }
 

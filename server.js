@@ -9,7 +9,11 @@ const url = require('url');
 const path = require('path');
 const fs = require('fs');
 const { pipeline } = require('stream');
+const { exec } = require('child_process');
+const { promisify } = require('util');
 const assToVtt = require('ass-to-vtt');
+
+const execAsync = promisify(exec);
 
 const PORT = process.env.PORT || 4000;
 
@@ -22,7 +26,10 @@ const MIME_TYPES = {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon'
+    '.ico': 'image/x-icon',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    '.mp4': 'video/mp4'
 };
 
 const server = http.createServer(async (req, res) => {
@@ -185,7 +192,62 @@ const server = http.createServer(async (req, res) => {
         }
         return;
     }
-    
+
+    // Video analysis endpoint: /analyze?url=VIDEO_URL
+    if (pathname === '/analyze') {
+        const videoUrl = parsedUrl.query.url;
+
+        if (!videoUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing url parameter' }));
+            return;
+        }
+
+        console.log(`\n🔍 Analyzing video: ${videoUrl}`);
+
+        try {
+            const analysis = await analyzeVideo(videoUrl);
+            res.writeHead(200, {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify(analysis));
+        } catch (error) {
+            console.error('❌ Analysis error:', error.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: error.message,
+                ffprobeAvailable: false
+            }));
+        }
+        return;
+    }
+
+    // Extract subtitle endpoint: /extract-subtitle?url=VIDEO_URL&index=N
+    if (pathname === '/extract-subtitle') {
+        const videoUrl = parsedUrl.query.url;
+        const subtitleIndex = parsedUrl.query.index || '0';
+
+        if (!videoUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing url parameter' }));
+            return;
+        }
+
+        console.log(`\n📤 Extracting subtitle ${subtitleIndex} from: ${videoUrl}`);
+
+        try {
+            await extractSubtitle(videoUrl, subtitleIndex, req, res);
+        } catch (error) {
+            console.error('❌ Extraction error:', error.message);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+        }
+        return;
+    }
+
     // Serve static files
     let filePath = pathname === '/' ? '/index.html' : pathname;
     filePath = path.join(__dirname, filePath);
@@ -524,6 +586,146 @@ function proxySubtitle(subtitleUrl, clientReq, clientRes) {
         });
 
         proxyReq.end();
+    });
+}
+
+async function analyzeVideo(videoUrl) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Check if ffprobe is available
+            try {
+                await execAsync('ffprobe -version');
+            } catch (err) {
+                resolve({
+                    error: 'ffprobe not available',
+                    ffprobeAvailable: false,
+                    message: 'Install ffmpeg to enable automatic audio/subtitle detection'
+                });
+                return;
+            }
+
+            // Use ffprobe to analyze the video
+            const command = `ffprobe -v quiet -print_format json -show_format -show_streams "${videoUrl}"`;
+
+            const { stdout, stderr } = await execAsync(command, {
+                timeout: 30000,
+                maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+            });
+
+            const data = JSON.parse(stdout);
+
+            // Extract audio tracks
+            const audioTracks = data.streams
+                .filter(stream => stream.codec_type === 'audio')
+                .map((stream, index) => ({
+                    index: index,
+                    streamIndex: stream.index,
+                    codec: stream.codec_name,
+                    language: stream.tags?.language || 'unknown',
+                    title: stream.tags?.title || `Audio ${index + 1}`,
+                    channels: stream.channels,
+                    channelLayout: stream.channel_layout,
+                    sampleRate: stream.sample_rate,
+                    bitrate: stream.bit_rate
+                }));
+
+            // Extract subtitle tracks
+            const subtitleTracks = data.streams
+                .filter(stream => stream.codec_type === 'subtitle')
+                .map((stream, index) => ({
+                    index: index,
+                    streamIndex: stream.index,
+                    codec: stream.codec_name,
+                    language: stream.tags?.language || 'unknown',
+                    title: stream.tags?.title || `Subtitle ${index + 1}`,
+                    forced: stream.disposition?.forced === 1
+                }));
+
+            // Extract video info
+            const videoStreams = data.streams
+                .filter(stream => stream.codec_type === 'video')
+                .map(stream => ({
+                    codec: stream.codec_name,
+                    profile: stream.profile,
+                    width: stream.width,
+                    height: stream.height,
+                    fps: eval(stream.r_frame_rate),
+                    bitrate: stream.bit_rate
+                }));
+
+            const analysis = {
+                ffprobeAvailable: true,
+                format: data.format.format_name,
+                duration: parseFloat(data.format.duration),
+                size: parseInt(data.format.size),
+                bitrate: parseInt(data.format.bit_rate),
+                audioTracks: audioTracks,
+                subtitleTracks: subtitleTracks,
+                videoStreams: videoStreams,
+                hasMultipleAudio: audioTracks.length > 1,
+                hasEmbeddedSubtitles: subtitleTracks.length > 0
+            };
+
+            resolve(analysis);
+        } catch (error) {
+            console.error('Analysis error:', error);
+            resolve({
+                error: error.message,
+                ffprobeAvailable: false
+            });
+        }
+    });
+}
+
+async function extractSubtitle(videoUrl, subtitleIndex, clientReq, clientRes) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Check if ffmpeg is available
+            try {
+                await execAsync('ffmpeg -version');
+            } catch (err) {
+                reject(new Error('ffmpeg not available'));
+                return;
+            }
+
+            // Create a temporary file path
+            const tempFile = `/tmp/subtitle_${Date.now()}.vtt`;
+
+            // Extract subtitle using ffmpeg and convert to VTT
+            const command = `ffmpeg -i "${videoUrl}" -map 0:s:${subtitleIndex} "${tempFile}" -y`;
+
+            await execAsync(command, {
+                timeout: 30000
+            });
+
+            // Read the extracted file
+            fs.readFile(tempFile, 'utf8', (err, data) => {
+                if (err) {
+                    reject(new Error('Failed to read extracted subtitle'));
+                    return;
+                }
+
+                // Set response headers
+                clientRes.writeHead(200, {
+                    'Content-Type': 'text/vtt; charset=utf-8',
+                    'Access-Control-Allow-Origin': '*',
+                    'Cache-Control': 'public, max-age=3600'
+                });
+
+                clientRes.end(data);
+
+                // Clean up temp file
+                fs.unlink(tempFile, (unlinkErr) => {
+                    if (unlinkErr) console.error('Failed to delete temp file:', unlinkErr);
+                });
+
+                console.log('✅ Subtitle extracted and sent');
+                resolve();
+            });
+        } catch (error) {
+            console.error('Extraction error:', error);
+            reject(error);
+        }
     });
 }
 
